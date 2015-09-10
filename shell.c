@@ -4,8 +4,58 @@
 #include<unistd.h>
 #include<sys/wait.h>
 #include<signal.h>
+#include<fcntl.h>
+#include<sys/types.h>
+#include<sys/stat.h>
 
 char* BuiltInCMDS[] = {"cd","help","history","exit","NULL"};
+
+
+//Reads command from user
+char* readline(){
+	char *line = NULL, *wd=NULL;
+	size_t size = 1024;
+
+	wd = getcwd(wd,size);
+
+	printf("shellB:%s$ ",wd);
+	getline(&line,&size,stdin);
+
+	return line;
+}
+
+//Splits the command into program + arguments
+char** splitline(char *line)
+{
+  int buffer = 64;
+  int pos = 0;
+  char **args = malloc(buffer * sizeof(char*));
+  char *token;
+
+  if (!args) {
+    perror("Allocation error");
+    exit(EXIT_FAILURE);
+  }
+
+  token = strtok(line, " \t\r\n\a");
+  while (token != NULL) {
+    args[pos] = token;
+    pos+=1;
+
+    if (pos >= buffer) {
+      buffer += buffer;
+      args = realloc(args, buffer * sizeof(char*));
+      if (!args) {
+        perror("Reallocation error");
+        exit(EXIT_FAILURE);
+      }
+    }
+
+    token = strtok(NULL, " \t\r\n\a");
+  }
+  args[pos] = NULL;
+  return args;
+}
 
 //**** START help COMMAND ****
 
@@ -77,51 +127,139 @@ void cd(char *dir){
 
 //**** END - cd COMMAND ****
 
-//Reads command from user
-char* readline(){
-	char *line = NULL, *wd=NULL;
-	size_t size = 1024;
+//**** START - > redirection COMMAND ****
 
-	wd = getcwd(wd,size);
-
-	printf("shellB:%s$ ",wd);
-	getline(&line,&size,stdin);
-
-	return line;
+int isRedirectOne(char **args){
+	int ctr=1;
+	while(args[ctr]!=NULL){
+		if(strcmp(args[ctr],">")==0){
+			return 1;
+		}
+		ctr++;
+	}
+	return 0;
 }
 
-//Splits the command into program + arguments
-char** splitline(char *line)
-{
-  int buffer = 64;
-  int pos = 0;
-  char **args = malloc(buffer * sizeof(char*));
-  char *token;
+void redirectOne(char **args){
 
-  if (!args) {
-    perror("Allocation error");
-    exit(EXIT_FAILURE);
-  }
+	char *cmd=NULL;
+	cmd = malloc(1024*sizeof(char));
+	strcat(cmd,"");
+	int ctr=0;
+	while(strcmp(args[ctr],">")!=0){
+		strcat(cmd,args[ctr]);
+		strcat(cmd," ");
+		ctr++;
+	}
+	ctr++;
 
-  token = strtok(line, " \t\r\n\a");
-  while (token != NULL) {
-    args[pos] = token;
-    pos+=1;
+	char **argv = splitline(cmd);
 
-    if (pos >= buffer) {
-      buffer += buffer;
-      args = realloc(args, buffer * sizeof(char*));
-      if (!args) {
-        perror("Reallocation error");
-        exit(EXIT_FAILURE);
-      }
-    }
+	int stdoutCopy = dup(1); 
 
-    token = strtok(NULL, " \t\r\n\a");
-  }
-  args[pos] = NULL;
-  return args;
+	int out = open(args[ctr], O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IRGRP | S_IWGRP | S_IWUSR);
+
+    dup2(out, 1);
+    close(out);
+
+	//execvp(argv[0],argv);
+	pid_t pid, wid;
+	int status;
+	pid = fork();
+	if(pid<0){
+		perror("Forking Error");
+		return;
+	}
+	else if(pid==0){
+		int t;
+		t = execvp(argv[0],argv);
+		if(t==-1){
+			dup2(stdoutCopy,1);
+    		close(stdoutCopy);
+			perror("Error executing command");
+			printf("%s\n",argv[0]);
+			return;
+		}
+	}
+	else{
+	     wid = waitpid(pid, &status, WIFSTOPPED(status));
+	}
+
+	dup2(stdoutCopy,1);
+    close(stdoutCopy);
+   
+    return;
 }
+
+//**** END - > redirection COMMAND
+
+
+//**** START - < redirection COMMAND
+
+int isRedirectTwo(char **args){
+	int ctr=1;
+	while(args[ctr]!=NULL){
+		if(strcmp(args[ctr],"<")==0){
+			return 1;
+		}
+		ctr++;
+	}
+	return 0;
+}
+
+void redirectTwo(char **args){
+
+	char *cmd=NULL;
+	cmd = malloc(1024*sizeof(char));
+	strcat(cmd,"");
+	int ctr=0;
+	while(strcmp(args[ctr],"<")!=0){
+		strcat(cmd,args[ctr]);
+		strcat(cmd," ");
+		ctr++;
+	}
+	ctr++;
+
+	char **argv = splitline(cmd);
+
+	int stdinCopy = dup(0); 
+
+	int in = open(args[ctr], O_RDONLY);
+
+    dup2(in, 0);
+    close(in);
+
+	//execvp(argv[0],argv);
+	pid_t pid, wid;
+	int status;
+	pid = fork();
+	if(pid<0){
+		perror("Forking Error");
+		return;
+	}
+	else if(pid==0){
+		int t;
+		t = execvp(argv[0],argv);
+		if(t==-1){
+			dup2(stdinCopy,0);
+    		close(stdinCopy);
+			perror("Error executing command");
+			printf("%s\n",argv[0]);
+			return;
+		}
+	}
+	else{
+	     wid = waitpid(pid, &status, WIFSTOPPED(status));
+	}
+
+	dup2(stdinCopy,0);
+    close(stdinCopy);
+   
+    return;
+}
+
+//**** END - < redirection COMMAND
+
 
 int isBuiltIn(char* cmd){
 	int i=0;
@@ -169,8 +307,15 @@ int execute(char** args){
 	pid_t pid, wid;
 	int status;
 
+
 	if(isBuiltIn(args[0])){
 		execBuiltIn(args);
+		return;
+	}
+	
+
+	if(isRedirectOne(args)){
+		redirectOne(args);
 		return;
 	}
 
@@ -195,8 +340,23 @@ int execute(char** args){
 }
 
 
+//Handler for Ctrl+C interrupt
+void sigintHandler(int sig_num)
+{
+    signal(SIGINT, sigintHandler);
+    char *wd=NULL;
+	size_t size = 1024;
+
+	wd = getcwd(wd,size);
+
+	printf("\nshellB:%s$ ",wd);
+    fflush(stdout);
+    return;
+}
 
 int main(){
+	signal(SIGINT, sigintHandler);
+	//system("gnome-terminal");
 
 	while(1){
 		char *line;
