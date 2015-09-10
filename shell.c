@@ -27,34 +27,34 @@ char* readline(){
 //Splits the command into program + arguments
 char** splitline(char *line)
 {
-  int buffer = 64;
-  int pos = 0;
-  char **args = malloc(buffer * sizeof(char*));
-  char *token;
+	int buffer = 64;
+	int pos = 0;
+	char **args = malloc(buffer * sizeof(char*));
+	char *token;
 
-  if (!args) {
-    perror("Allocation error");
-    exit(EXIT_FAILURE);
-  }
+	if (!args) {
+	  perror("Allocation error");
+	  exit(EXIT_FAILURE);
+	}
 
-  token = strtok(line, " \t\r\n\a");
-  while (token != NULL) {
-    args[pos] = token;
-    pos+=1;
+	token = strtok(line, " \t\r\n\a");
+	while (token != NULL) {
+	  args[pos] = token;
+	  pos+=1;
 
-    if (pos >= buffer) {
-      buffer += buffer;
-      args = realloc(args, buffer * sizeof(char*));
-      if (!args) {
-        perror("Reallocation error");
-        exit(EXIT_FAILURE);
-      }
-    }
+	  if (pos >= buffer) {
+	    buffer += buffer;
+	    args = realloc(args, buffer * sizeof(char*));
+	    if (!args) {
+	      perror("Reallocation error");
+	      exit(EXIT_FAILURE);
+	    }
+	  }
 
-    token = strtok(NULL, " \t\r\n\a");
-  }
-  args[pos] = NULL;
-  return args;
+	  token = strtok(NULL, " \t\r\n\a");
+	}
+	args[pos] = NULL;
+	return args;
 }
 
 //**** START help COMMAND ****
@@ -108,7 +108,7 @@ void add_history(char* cmd){
 void show_history(){
 	history *temp=top;
 	while(temp!=NULL){
-		printf("%s",temp->command);
+		printf("%s\n",temp->command);
 		temp = temp->next;
 	}
 	return;
@@ -244,7 +244,6 @@ void redirectTwo(char **args){
 			dup2(stdinCopy,0);
     		close(stdinCopy);
 			perror("Error executing command");
-			printf("%s\n",argv[0]);
 			return;
 		}
 	}
@@ -259,6 +258,116 @@ void redirectTwo(char **args){
 }
 
 //**** END - < redirection COMMAND
+
+//**** START - | pipe COMMAND
+
+int isPipe(char **args){
+	int ctr=1;
+	while(args[ctr]!=NULL){
+		if(strcmp(args[ctr],"|")==0){
+			return 1;
+		}
+		ctr++;
+	}
+	return 0;
+}
+
+void pipecmd(char **args){
+
+	char *cmd1=NULL, *cmd2=NULL;
+	cmd1 = malloc(1024*sizeof(char));
+	cmd2 = malloc(1024*sizeof(char));
+	strcat(cmd1,"");
+	strcat(cmd2,"");
+
+	//Get the left command
+	int ctr=0;
+	while(strcmp(args[ctr],"|")!=0){
+		strcat(cmd1,args[ctr]);
+		strcat(cmd1," ");
+		ctr++;
+	}
+	ctr++;
+	char **argv1 = splitline(cmd1);
+
+	//Get the right command
+	while(args[ctr]!=NULL){
+		strcat(cmd2,args[ctr]);
+		strcat(cmd2," ");
+		ctr++;
+	}
+	ctr++;
+	char **argv2 = splitline(cmd2);
+
+	//printf("%s %s | %s %s", argv1[0],argv1[1],argv2[0],argv2[1]);
+
+	int fd[2];
+	pipe(fd);
+
+	//Copy original file descriptors
+	int stdinCopy = dup(0);
+	int stdoutCopy = dup(1);
+
+
+	pid_t pid, wid;
+	int status;
+	pid_t pid2,wid2;
+	int status2;
+	pid = fork();
+	if(pid<0){
+		perror("Forking Error");
+		return;
+	}
+	else if(pid==0){
+		//PIPING STUFF HERE
+		pid2 = fork();
+
+		if(pid2<0){
+			perror("Forking Error");
+			return;
+		}
+		else if(pid2==0){
+			//input for right command
+			dup2(fd[0],0);
+			close(fd[1]);
+			int t;
+			t = execvp(argv2[0],argv2);
+			if(t==-1){
+				dup2(stdinCopy,0);
+	    		close(stdinCopy);
+				perror("Error executing command");
+				return;
+			}
+			dup2(stdinCopy,0);
+	    	close(stdinCopy);
+
+		}
+		else{
+			//wid2 = waitpid(pid2, &status2, WIFSTOPPED(status));
+
+			//output for left command
+			dup2(fd[1],1);
+			close(fd[0]);
+			int t;
+			t = execvp(argv1[0],argv1);
+			if(t==-1){
+				dup2(stdoutCopy,1);
+	    		close(stdoutCopy);
+				perror("Error executing command");
+				return;
+			}
+			dup2(stdoutCopy,1);
+	    	close(stdoutCopy);
+		}
+
+	}
+	else{
+	     wid = waitpid(pid, &status, WIFSTOPPED(status));
+	}
+
+}
+
+//**** END - | pipe COMMAND
 
 
 int isBuiltIn(char* cmd){
@@ -307,6 +416,9 @@ int execute(char** args){
 	pid_t pid, wid;
 	int status;
 
+	if(args[0]==NULL){
+		return;
+	}
 
 	if(isBuiltIn(args[0])){
 		execBuiltIn(args);
@@ -316,6 +428,11 @@ int execute(char** args){
 
 	if(isRedirectOne(args)){
 		redirectOne(args);
+		return;
+	}
+
+	if(isPipe(args)){
+		pipecmd(args);
 		return;
 	}
 
@@ -362,8 +479,10 @@ int main(){
 		char *line;
 		char **args;
 		line = readline();
-		add_history(line);
 		args = splitline(line);
+		if(args[0]!=NULL){
+			add_history(line);
+		}
 		execute(args);
 
 		/*
