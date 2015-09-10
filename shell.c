@@ -302,7 +302,6 @@ void pipecmd(char **args){
 	//printf("%s %s | %s %s", argv1[0],argv1[1],argv2[0],argv2[1]);
 
 	int fd[2];
-	pipe(fd);
 
 	//Copy original file descriptors
 	int stdinCopy = dup(0);
@@ -320,6 +319,7 @@ void pipecmd(char **args){
 	}
 	else if(pid==0){
 		//PIPING STUFF HERE
+		pipe(fd);
 		pid2 = fork();
 
 		if(pid2<0){
@@ -327,6 +327,22 @@ void pipecmd(char **args){
 			return;
 		}
 		else if(pid2==0){
+	    	//output for left command
+			dup2(fd[1],1);
+			close(fd[0]);
+			int t;
+			t = execvp(argv1[0],argv1);
+			if(t==-1){
+				dup2(stdoutCopy,1);
+	    		close(stdoutCopy);
+				perror("Error executing command");
+				return;
+			}
+
+		}
+		else{
+			wid2 = waitpid(pid2, &status2, WIFSTOPPED(status));
+
 			//input for right command
 			dup2(fd[0],0);
 			close(fd[1]);
@@ -338,27 +354,13 @@ void pipecmd(char **args){
 				perror("Error executing command");
 				return;
 			}
-			dup2(stdinCopy,0);
-	    	close(stdinCopy);
-
+			
 		}
-		else{
-			//wid2 = waitpid(pid2, &status2, WIFSTOPPED(status));
-
-			//output for left command
-			dup2(fd[1],1);
-			close(fd[0]);
-			int t;
-			t = execvp(argv1[0],argv1);
-			if(t==-1){
-				dup2(stdoutCopy,1);
-	    		close(stdoutCopy);
-				perror("Error executing command");
-				return;
-			}
-			dup2(stdoutCopy,1);
-	    	close(stdoutCopy);
-		}
+		dup2(stdinCopy,0);
+	    close(stdinCopy);
+		dup2(stdoutCopy,1);
+	    close(stdoutCopy);
+	    return;
 
 	}
 	else{
